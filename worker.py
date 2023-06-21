@@ -3,7 +3,7 @@ import time
 import datetime
 import hashlib
 import requests
-import json
+import sys
 
 from tasks import Task
 
@@ -74,6 +74,13 @@ class Worker:
 
     def terminate(self):
         requests.post(f"http://{self.my_addr}:5000/killWorker?work_id={self.worker_id}")
+
+if __name__ == "__main__":
+    args = sys.argv
+    id = args[1]
+    ip1 = args[2]
+    sibling_ip = args[3]
+    worker = Worker(id, ip1, sibling_ip)
 
 
 
