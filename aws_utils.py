@@ -205,7 +205,7 @@ class AWSUtils:
             self.create_iam()
         with open(r'./worker_setup.sh', 'r') as f:
             user_data = f.read()
-            user_data.format(worker_id, my_ip, sibling_ip)
+            user_data = user_data.format(worker_id, my_ip, sibling_ip)
         if create_keypair:
             key_name = self.create_key_pair()
         instances = self.resource.create_instances(
