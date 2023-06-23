@@ -282,7 +282,7 @@ if __name__ == "__main__":
     if len(args) > 3:
         sibling_ip = args[3]
     endpoint = Endpoint(num_workers, my_ip, sibling_ip)
-    endpoint.run()
+    endpoint.run(host='0.0.0.0')
     # connect sibling
     if sibling_ip:
         req = requests.post(f"http://{sibling_ip}:5000/add_sibling?sibling_ip={my_ip}")
