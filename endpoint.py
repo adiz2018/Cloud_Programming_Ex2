@@ -21,7 +21,7 @@ class Endpoint:
         self.my_ip = my_ip
         self.sibling_ip = sibling_ip
         # define workers properties
-        self.max_num_of_workers = max_num_of_workers
+        self.max_num_of_workers = int(max_num_of_workers)
         self.current_num_of_workers = 0
         # define queues
         self.workQueue = queue.Queue()
@@ -276,11 +276,11 @@ class Endpoint:
 
 if __name__ == "__main__":
     args = sys.argv
-    my_ip = args[1]
-    num_workers = args[2]
+    my_ip = requests.get('https://checkip.amazonaws.com').text.strip()
+    num_workers = args[1]
     sibling_ip = None
-    if len(args) > 3:
-        sibling_ip = args[3]
+    if len(args) > 2:
+        sibling_ip = args[2]
     endpoint = Endpoint(num_workers, my_ip, sibling_ip)
     endpoint.run(host='0.0.0.0')
     # connect sibling
