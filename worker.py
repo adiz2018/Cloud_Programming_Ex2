@@ -11,9 +11,9 @@ MAX_IDLE_TIME = 600
 
 class Worker:
 
-    def __init__(self, worker_id, my_addr, sibling_addr):
-        self.worker_id = worker_id
-        self.my_addr = my_addr
+    def __init__(self, worker_id, endpoint_addr, sibling_addr):
+        self.worker_id = int(worker_id)
+        self.endpoint_addr = endpoint_addr
         self.sibling_addr = sibling_addr
 
         # start the worker
@@ -28,8 +28,8 @@ class Worker:
 
     def get_nodes(self):
         if self.sibling_addr:
-            return [self.my_addr, self.sibling_addr]
-        return [self.my_addr]
+            return [self.endpoint_addr, self.sibling_addr]
+        return [self.endpoint_addr]
 
     def loop(self):
         nodes = self.get_nodes()
@@ -45,7 +45,6 @@ class Worker:
                         result = self.do_work(int(work['iterations']), bytes.fromhex(work['buffer']))
                         # return the result to the endpoint
                         j = {'work_id': work['task_id'], 'result': result.hex()}
-                        print(result.hex())
                         req = requests.post(f'http://{node}:5000/done_work', json=j, timeout=10)
                         if req.status_code != 200:
                             print(f"An error occurred while trying to save the result for {work['task_id']}")
@@ -73,13 +72,15 @@ class Worker:
     #     self.terminate()
 
     def terminate(self):
-        requests.post(f"http://{self.my_addr}:5000/killWorker?work_id={self.worker_id}")
+        requests.post(f"http://{self.endpoint_addr}:5000/killWorker?work_id={self.worker_id}")
 
 if __name__ == "__main__":
     args = sys.argv
     id = args[1]
     ip1 = args[2]
-    sibling_ip = args[3]
+    sibling_ip = None
+    if len(args) > 3:
+        sibling_ip = args[3]
     worker = Worker(id, ip1, sibling_ip)
 
 

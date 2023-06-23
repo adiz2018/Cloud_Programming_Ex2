@@ -8,6 +8,7 @@ import sys
 
 from worker import Worker
 from tasks import Task
+from aws_utils import AWSUtils
 
 app = Flask(__name__)
 # display response as pretty json
@@ -36,6 +37,7 @@ class Endpoint:
         # configure API
         self.add_all_functions()
 
+        self.aws = AWSUtils()
 
     def add_all_functions(self):
         # Add endpoint for the action function
@@ -102,7 +104,7 @@ class Endpoint:
         return make_response(jsonify(success=True), 200)
 
     # @app.route('/spawn_worker', methods=['POST'])
-    def spawn_worker(self):
+    def old_spawn_worker(self):
         val = self.get_attribute(request, 'from_sibling')
         # val = request.get_json().get('from_sibling')
         from_sibling = True if val == 'true' else False
@@ -112,6 +114,15 @@ class Endpoint:
         return make_response(jsonify(spawn_id=spawn_id, from_sibling=from_sibling, error="couldn't spawn process"), 400)
 
     def create_worker(self):
+        worker, worker_ip = self.aws.create_worker_instance(self.worker_id,
+                                        self.my_ip,
+                                        sibling_ip=self.sibling_ip)
+        self.workers[self.worker_id] = worker
+        self.worker_id += 1
+        self.current_num_of_workers += 1
+        return self.worker_id - 1
+
+    def old_create_worker(self):
         # create worker process
         worker = Process(target=Worker, args=((self.worker_id,
                                                self.my_ip,
@@ -132,27 +143,11 @@ class Endpoint:
 
 
     def spawn_worker_inner(self, from_sibling=False):
-        # TODO: Should I check if worker creation was successful? Multiprocessing?
         # check if we can create a worker for the current endpoint
         if self.current_num_of_workers < self.max_num_of_workers:
             new_worker_id = self.create_worker()
             return new_worker_id, from_sibling
-            # # create worker process
-            # worker = Process(target=Worker, args=((self.worker_id,
-            #                                        self.my_ip,
-            #                                        self.sibling_ip)))
-            # worker.daemon = True
-            # # start worker process
-            # worker.start()
-            # # wait for worker to start
-            # time.sleep(1)
-            # self.workers[self.worker_id] = worker
-            # # check worker is alive
-            # if self.check_if_worker_alive(self.worker_id):
-            #     # increase number of workers
-            #     self.worker_id += 1
-            #     self.current_num_of_workers += 1
-            #     return self.worker_id-1, from_sibling
+
         # otherwise, check if we can take a worker from the sibling endpoint
         is_available, num_of_abailable_workers = self.check_sibling_workers()
         if is_available and num_of_abailable_workers > 0:
@@ -163,16 +158,6 @@ class Endpoint:
                 new_worker_id = self.create_worker()
                 return new_worker_id, True
 
-        # elif not from_sibling and self.check_sibling_workers():
-        #     # try to spawn worker on sibling endpoint
-        #     try:
-        #         req = requests.post(f"http://{self.sibling_ip}:5000/spawn_worker", json={'from_sibling': True}, timeout=10)
-        #         j = req.json()
-        #         return j.spawn_id, j.from_sibling
-        #     except requests.exceptions.ConnectTimeout:
-        #         print(f"Error: can't connect to sibling ip: {self.sibling_ip}")
-        #         return -1, from_sibling
-        # can't spawn worker
         return -1, from_sibling
 
     def check_num_of_workers(self):
@@ -184,8 +169,19 @@ class Endpoint:
     def check_if_worker_alive(self, id):
         return self.workers[id].is_alive()
 
-    # @app.route('/killWorker', methods=['POST'])
     def kill_worker(self):
+        worker_id = int(self.get_attribute(request, 'work_id'))
+        if worker_id in list(self.workers.keys()):
+            # update number of workers
+            self.current_num_of_workers -= 1
+            success = self.aws.terminate_instance(self.workers[worker_id].id)
+            if success:
+                print(f'worker {worker_id} was successfully terminated')
+                return make_response(jsonify(killed=True), 200)
+        return make_response(jsonify(killed=False), 400)
+
+    # @app.route('/killWorker', methods=['POST'])
+    def old_kill_worker(self):
         worker_id = int(self.get_attribute(request, 'work_id'))
         # kill process
         if worker_id in list(self.workers.keys()) and self.check_if_worker_alive(worker_id):
@@ -258,9 +254,6 @@ class Endpoint:
     # @app.route('/pullCompleted', methods=['POST'])
     def pullComplete(self):
         top = int(self.get_attribute(request, 'top'))
-        # content = request.get_json()
-        # top = int(content.get('top'))
-        # top = request.args.get('top')
         results = []
         keys = ['work_id', 'result']
 
@@ -284,6 +277,3 @@ if __name__ == "__main__":
     endpoint = Endpoint(num_workers, my_ip, sibling_ip)
     endpoint.run(host='0.0.0.0')
     # connect sibling
-    if sibling_ip:
-        req = requests.post(f"http://{sibling_ip}:5000/add_sibling?sibling_ip={my_ip}")
-        j = req.json()
