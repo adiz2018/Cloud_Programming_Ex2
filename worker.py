@@ -1,4 +1,3 @@
-import queue
 import time
 import datetime
 import hashlib
@@ -19,7 +18,6 @@ class Worker:
         # start the worker
         self.loop()
 
-    # ec2 - terminate on shutdown
     def do_work(self, iterations, buffer):
         output = hashlib.sha512(buffer).digest()
         for i in range(iterations - 1):
@@ -57,19 +55,6 @@ class Worker:
 
         # we can terminate because no work is needed
         self.terminate()
-
-    # def loop(self):
-    #     last_time = datetime.datetime.now()
-    #     while (datetime.datetime.now() - last_time).seconds <= MAX_IDLE_TIME:
-    #         try:
-    #             work = self.work_queue.get(block=False)
-    #             if work:
-    #                 result = self.do_work(work)
-    #                 # push to the results queue
-    #                 self.done_queue.put((work.task_id, result))
-    #         except queue.Empty:
-    #             time.sleep(2)
-    #     self.terminate()
 
     def terminate(self):
         requests.post(f"http://{self.endpoint_addr}:5000/killWorker?work_id={self.worker_id}")

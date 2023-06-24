@@ -1,5 +1,4 @@
 import boto3
-import sys
 import requests
 import json
 import botocore.exceptions
@@ -29,10 +28,12 @@ POLICY_DOC = {
                 "ec2:DescribeInstances",
                 "ec2:RunInstances",
                 "ec2:StopInstances",
+                "ec2:StartInstances",
                 "ec2:TerminateInstances",
                 "ec2:AuthorizeSecurityGroupIngress",
                 "ec2:DescribeKeyPairs",
                 "ec2:DescribeSecurityGroups"
+
             ],
             "Resource": "*"
         }
@@ -47,9 +48,6 @@ class AWSUtils:
         self.client = boto3.client('ec2', region_name=AWS_REGION)
         self.iam = boto3.client('iam', region_name=AWS_REGION)
         self.key_name = None
-        # TODO: do I need anything other than the key name?
-        self.key_fingerprint = None
-        self.private = None
         self.sec_group_exists = False
         self.role_was_created = False
 
@@ -72,7 +70,7 @@ class AWSUtils:
     def create_iam_policy(self, role_name=None):
         try:
             response = self.iam.create_policy(
-                PolicyName=POLICY_NAME,  # Replace with your desired policy name
+                PolicyName=POLICY_NAME,
                 PolicyDocument=json.dumps(POLICY_DOC)
             )
             policy_arn = response['Policy']['Arn']
@@ -116,16 +114,6 @@ class AWSUtils:
         )
         if response['KeyPairs']:
             return key_name
-        # key_pairs = self.resource.key_pairs.filter(
-        #     KeyNames=[
-        #         key_name,
-        #     ],
-        # )
-        # try:
-        #     for key in key_pairs:
-        #         self.key_name = key.key_name
-        #         return self.key_name
-        # except self.exceptions.ClientError:
 
         key_pair = self.resource.create_key_pair(
             KeyName=key_name,
@@ -142,8 +130,8 @@ class AWSUtils:
             ]
         )
         self.key_name = key_pair.key_name
-        self.key_fingerprint = key_pair.key_fingerprint
-        self.private = key_pair.key_material
+        # self.key_fingerprint = key_pair.key_fingerprint
+        # self.private = key_pair.key_material
         return key_name
 
     def create_security_group(self, description, group_name='adi-ex2-sec-group'):
@@ -197,17 +185,19 @@ class AWSUtils:
             print('rule already exists')
 
 
-    def create_worker_instance(self, worker_id, my_ip, sibling_ip=None, define_iam=False, create_keypair=False):
+    def create_worker_instance(self, worker_id, my_ip, sibling_ip=None, define_iam=False):
         sec_group_id = self.create_security_group('ex2-sec-group')
-        # my_ip = requests.get('https://checkip.amazonaws.com').text.strip()
 
         if define_iam:
             self.create_iam()
+
+        # get the code that will run on the instance
         with open(r'./worker_setup.sh', 'r') as f:
             user_data = f.read()
             user_data = user_data.format(worker_id, my_ip, sibling_ip)
-        if create_keypair:
-            key_name = self.create_key_pair()
+        # get key_pair
+        key_name = self.create_key_pair()
+        # create instance
         instances = self.resource.create_instances(
             ImageId="ami-042e8287309f5df03",
             MinCount=1,
@@ -216,10 +206,7 @@ class AWSUtils:
             KeyName=key_name,
             SecurityGroupIds=[sec_group_id],
             InstanceInitiatedShutdownBehavior='terminate',
-            UserData=user_data,
-            IamInstanceProfile={
-                'Name': PROPILE_NAME
-            }
+            UserData=user_data
         )
         for instance in instances:
             print(f'EC2 instance "{instance.id}" has been launched')
@@ -238,22 +225,27 @@ class AWSUtils:
         return instances[0], public_ip
 
 
-    def create_endpoint_instance(self, num_of_workers, sibling_ip=None, define_iam=False, create_keypair=False):
+    def create_endpoint_instance(self, num_of_workers, sibling_ip=None, define_iam=False):
         sec_group_id = self.create_security_group('ex2-sec-group')
 
         # add inbound rules
-        # if not self.sec_group_exists:
-        my_ip = requests.get('https://checkip.amazonaws.com').text.strip()
-        self.security_inbound(my_ip, 5000, sec_id=sec_group_id)
-        self.security_inbound(my_ip, 22, sec_id=sec_group_id)
+        try:
+            my_ip = requests.get('https://checkip.amazonaws.com').text.strip()
+        except:
+            my_ip = '0.0.0.0'
 
+        self.security_inbound('0.0.0.0/0', 5000, sec_id=sec_group_id)
+        self.security_inbound(f'{my_ip}/32', 22, sec_id=sec_group_id)
+        # define iam
         if define_iam:
             self.create_iam()
+        # get the code that will run on the instance
         with open(r'./endpoint_setup.sh', 'r') as f:
             user_data = f.read()
             user_data = user_data.format(num_of_workers, sibling_ip)
-        if create_keypair:
-            key_name = self.create_key_pair()
+        # get key_pair
+        key_name = self.create_key_pair()
+        # create instance
         instances = self.resource.create_instances(
             ImageId="ami-042e8287309f5df03",
             MinCount=1,
@@ -293,5 +285,5 @@ class AWSUtils:
 
 if __name__=='__main__':
     utils = AWSUtils()
-    utils.create_endpoint_instance(2, define_iam=True, create_keypair=True)
+    utils.create_endpoint_instance(2, define_iam=True)
 

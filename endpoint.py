@@ -5,14 +5,15 @@ import requests
 import time
 import queue
 import sys
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from worker import Worker
 from tasks import Task
 from aws_utils import AWSUtils
 
-app = Flask(__name__)
+# app = Flask(__name__)
 # display response as pretty json
-app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True
+# app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True
 
 MAX_TASK_TIME_SEC = 15
 
@@ -38,11 +39,14 @@ class Endpoint:
         self.add_all_functions()
 
         self.aws = AWSUtils()
+        # define scheduled function that will check if worker should be started
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(id='Scheduled task', func=self.timer_new_worker, trigger='interval', seconds=30)
+        scheduler.start()
 
     def add_all_functions(self):
         # Add endpoint for the action function
         self.add_endpoint('/add_sibling', 'add_sibling', self.add_sibling, methods=['POST'])
-        self.add_endpoint('/spawn_worker', 'spawn_worker', self.spawn_worker, methods=['POST'])
         self.add_endpoint('/get_is_available_workers_num', 'get_workers_num', self.check_num_of_workers, methods=['GET'])
         self.add_endpoint('/killWorker', 'killWorker', self.kill_worker, methods=['POST'])
         self.add_endpoint('/enqueue', 'enqueue', self.enqueueWork, methods=['PUT'])
@@ -66,10 +70,8 @@ class Endpoint:
             attr = content.get(name)
         return attr
 
-    # @app.route('/add_sibling', methods=['POST'])
     def add_sibling(self):
         sibling_ip = self.get_attribute(request, 'sibling_ip')
-        # sibling_ip = request.args.get('sibling_ip')
         if sibling_ip:
             print(f'setting sibling to {sibling_ip}')
             self.sibling_ip = sibling_ip
@@ -103,16 +105,6 @@ class Endpoint:
         self.max_num_of_workers -= 1
         return make_response(jsonify(success=True), 200)
 
-    # @app.route('/spawn_worker', methods=['POST'])
-    def old_spawn_worker(self):
-        val = self.get_attribute(request, 'from_sibling')
-        # val = request.get_json().get('from_sibling')
-        from_sibling = True if val == 'true' else False
-        spawn_id, from_sibling = self.spawn_worker_inner(from_sibling=from_sibling)
-        if spawn_id != -1:
-            return make_response(jsonify(spawn_id=spawn_id, from_sibling=from_sibling, error=None), 200)
-        return make_response(jsonify(spawn_id=spawn_id, from_sibling=from_sibling, error="couldn't spawn process"), 400)
-
     def create_worker(self):
         worker, worker_ip = self.aws.create_worker_instance(self.worker_id,
                                         self.my_ip,
@@ -122,30 +114,11 @@ class Endpoint:
         self.current_num_of_workers += 1
         return self.worker_id - 1
 
-    def old_create_worker(self):
-        # create worker process
-        worker = Process(target=Worker, args=((self.worker_id,
-                                               self.my_ip,
-                                               self.sibling_ip)))
-        worker.daemon = True
-        # start worker process
-        worker.start()
-        # wait for worker to start
-        time.sleep(1)
-        self.workers[self.worker_id] = worker
-        # check worker is alive
-        if self.check_if_worker_alive(self.worker_id):
-            # increase number of workers
-            self.worker_id += 1
-            self.current_num_of_workers += 1
-            return self.worker_id - 1
-        return -1
-
-
     def spawn_worker_inner(self, from_sibling=False):
         # check if we can create a worker for the current endpoint
         if self.current_num_of_workers < self.max_num_of_workers:
             new_worker_id = self.create_worker()
+            print(f'new worker was created on endpoint with ID: {new_worker_id}')
             return new_worker_id, from_sibling
 
         # otherwise, check if we can take a worker from the sibling endpoint
@@ -156,6 +129,7 @@ class Endpoint:
             if req.status_code == 200:
                 self.max_num_of_workers += 1
                 new_worker_id = self.create_worker()
+                print(f'new worker was created on (from sibling) endpoint with ID: {new_worker_id}')
                 return new_worker_id, True
 
         return -1, from_sibling
@@ -180,24 +154,8 @@ class Endpoint:
                 return make_response(jsonify(killed=True), 200)
         return make_response(jsonify(killed=False), 400)
 
-    # @app.route('/killWorker', methods=['POST'])
-    def old_kill_worker(self):
-        worker_id = int(self.get_attribute(request, 'work_id'))
-        # kill process
-        if worker_id in list(self.workers.keys()) and self.check_if_worker_alive(worker_id):
-            # update number of workers
-            self.current_num_of_workers -= 1
-            self.workers[worker_id].terminate()
-            # give it time to die
-            time.sleep(0.5)
-            if self.check_if_worker_alive(worker_id):
-                print(f"couldn't terminate process {worker_id}")
-                return make_response(jsonify(killed=False), 400)
-            self.workers[worker_id].join(timeout=1.0)
-            return make_response(jsonify(killed=True), 200)
-        return make_response(jsonify(killed=False), 400)
-
     def timer_new_worker(self):
+        print('checking if new worker should be created')
         if self.workQueue.qsize() > 0:
             last_task_time = list(self.workQueue.queue)[0].receive_time
             if (datetime.datetime.now() - last_task_time).seconds > MAX_TASK_TIME_SEC:
@@ -210,37 +168,27 @@ class Endpoint:
                 else:
                     print("worker couldn't be created")
 
-    # @app.route('/enqueue', methods=['PUT'])
     def enqueueWork(self):
         iterations = self.get_attribute(request, 'iterations')
-        # print(request.args)
-        # iterations = request.args.get('iterations')
         body = request.get_data().hex()
         # check if more workers are needed
         if self.current_num_of_workers == 0:
             spawn_id, from_sibling = self.spawn_worker_inner()
-        else:
-            self.timer_new_worker()
-        # inset new work
+
         task = Task(self.task_id, body, iterations)
         self.workQueue.put(task)
         self.task_id += 1
         return make_response(jsonify(work_id=self.task_id - 1), 200)
 
-    # @app.route('/get_work', methods=['GET'])
     def give_work(self):
         if not self.workQueue.empty():
             work = self.workQueue.get()
             return make_response(jsonify(work=work.__dict__), 200)
         return make_response(jsonify(work={}), 400)
 
-    # @app.route('/done_work', methods=['POST'])
     def done_work(self):
         work_id = self.get_attribute(request, 'work_id')
         result = self.get_attribute(request, 'result')
-        # content = request.get_json()
-        # work_id = content.get('work_id')
-        # result = content.get('result')
         if result:
             self.DoneQueue.put((work_id, result))
             return make_response(jsonify(success=True), 200)
@@ -251,7 +199,6 @@ class Endpoint:
         j = req.json()
         return j.results
 
-    # @app.route('/pullCompleted', methods=['POST'])
     def pullComplete(self):
         top = int(self.get_attribute(request, 'top'))
         results = []
@@ -276,4 +223,3 @@ if __name__ == "__main__":
         sibling_ip = args[2]
     endpoint = Endpoint(num_workers, my_ip, sibling_ip)
     endpoint.run(host='0.0.0.0')
-    # connect sibling
