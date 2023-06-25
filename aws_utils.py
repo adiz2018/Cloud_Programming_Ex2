@@ -31,9 +31,10 @@ POLICY_DOC = {
                 "ec2:StartInstances",
                 "ec2:TerminateInstances",
                 "ec2:AuthorizeSecurityGroupIngress",
-                "ec2:DescribeKeyPairs",
-                "ec2:DescribeSecurityGroups"
-
+                "ec2:DescribeSecurityGroups",
+                "ec2:CreateSecurityGroup",
+                "ec2:CreateKeyPair",
+                "ec2:DescribeKeyPairs"
             ],
             "Resource": "*"
         }
@@ -105,7 +106,7 @@ class AWSUtils:
         self.create_instance_profile(ROLE_NAME)
         print(f'the role arn is: {role_arn}\n The policy arn is: {policy_arn}')
 
-    def create_key_pair(self, key_name='adi-ex2-key-pair'):
+    def create_key_pair(self, key_name='cloud-ex2-key-pair'):
         # check if key already exists
         response = self.client.describe_key_pairs(
             Filters=[
@@ -134,7 +135,7 @@ class AWSUtils:
         # self.private = key_pair.key_material
         return key_name
 
-    def create_security_group(self, description, group_name='adi-ex2-sec-group'):
+    def create_security_group(self, description, group_name='ex2-sec-group'):
         # check if group exists
         response = self.client.describe_security_groups(
             Filters=[
@@ -163,19 +164,18 @@ class AWSUtils:
         return security_group.group_id
 
     def security_inbound(self, ip, port, protocol='tcp', sec_group=None, sec_id=None):
-        # TODO: Should I check if the rule already exists?
         try:
             # traffic into instances in the group
             if sec_group:
                 sec_group.authorize_ingress(
-                    CidrIp=f'{ip}/32',
+                    CidrIp=ip,
                     FromPort=port,
                     ToPort=port,
                     IpProtocol=protocol,
                 )
             elif sec_id:
                 self.client.authorize_security_group_ingress(
-                    CidrIp=f'{ip}/32',
+                    CidrIp=ip,
                     FromPort=port,
                     ToPort=port,
                     IpProtocol=protocol,
@@ -218,7 +218,7 @@ class AWSUtils:
 
         # open worker to endpoint
         public_ip = instances[0].public_ip_address
-        self.security_inbound(public_ip, 5000, sec_id=sec_group_id)
+        self.security_inbound(f'{public_ip}/32', 5000, sec_id=sec_group_id)
 
         print(f'The instance Ip is: {public_ip}')
 
@@ -232,10 +232,10 @@ class AWSUtils:
         try:
             my_ip = requests.get('https://checkip.amazonaws.com').text.strip()
         except:
-            my_ip = '0.0.0.0'
-
-        self.security_inbound('0.0.0.0/0', 5000, sec_id=sec_group_id)
-        self.security_inbound(f'{my_ip}/32', 22, sec_id=sec_group_id)
+            my_ip = None
+        if my_ip:
+            self.security_inbound('0.0.0.0/0', 5000, sec_id=sec_group_id)
+            self.security_inbound(f'{my_ip}/32', 22, sec_id=sec_group_id)
         # define iam
         if define_iam:
             self.create_iam()

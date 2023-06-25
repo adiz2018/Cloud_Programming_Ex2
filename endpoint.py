@@ -1,5 +1,4 @@
 from flask import Flask, request, jsonify, make_response
-from multiprocessing import Process
 import datetime
 import requests
 import time
@@ -15,7 +14,7 @@ from aws_utils import AWSUtils
 # display response as pretty json
 # app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True
 
-MAX_TASK_TIME_SEC = 15
+MAX_TASK_TIME_SEC = 60
 
 class Endpoint:
 
@@ -41,7 +40,7 @@ class Endpoint:
         self.aws = AWSUtils()
         # define scheduled function that will check if worker should be started
         scheduler = BackgroundScheduler()
-        scheduler.add_job(id='Scheduled task', func=self.timer_new_worker, trigger='interval', seconds=30)
+        scheduler.add_job(id='Scheduled task', func=self.timer_new_worker, trigger='interval', seconds=600)
         scheduler.start()
 
     def add_all_functions(self):
@@ -53,6 +52,7 @@ class Endpoint:
         self.add_endpoint('/get_work', 'get_work', self.give_work, methods=['GET'])
         self.add_endpoint('/done_work', 'done_work', self.done_work, methods=['POST'])
         self.add_endpoint('/pullCompleted', 'pullCompleted', self.pullComplete, methods=['POST'])
+        self.add_endpoint('/pullCompletedSibling', 'pullCompletedSibling', self.pullComplete_sibling, methods=['POST'])
         self.add_endpoint('/', 'up', self.is_up, methods=['GET'])
         self.add_endpoint('/updateMaxWorkers', 'updateMaxWorkers', self.update_max_num_of_workers, methods=['POST'])
 
@@ -67,7 +67,8 @@ class Endpoint:
         attr = request.args.get(name)
         if attr is None:
             content = request.get_json()
-            attr = content.get(name)
+            if content:
+                attr = content.get(name)
         return attr
 
     def add_sibling(self):
@@ -195,12 +196,14 @@ class Endpoint:
         return make_response(jsonify(success=False), 400)
 
     def get_complete_from_sibling(self, top):
-        req = requests.post(f"http://{self.sibling_ip}:5000/pullCompleted?top={top}")
-        j = req.json()
-        return j.results
+        try:
+            req = requests.post(f"http://{self.sibling_ip}:5000/pullCompletedSibling?top={top}")
+            j = req.json()
+            return j['results']
+        except requests.exceptions.ReadTimeout:
+            return []
 
-    def pullComplete(self):
-        top = int(self.get_attribute(request, 'top'))
+    def pull_results(self, top, from_sibling=False):
         results = []
         keys = ['work_id', 'result']
 
@@ -209,8 +212,20 @@ class Endpoint:
                 result = self.DoneQueue.get()
                 results.append(dict([x for x in zip(keys, result)]))
 
-        if len(results) < top and self.check_is_sibling_up():
-            results.extend(self.get_complete_from_sibling(top-len(results)))
+        if not from_sibling and len(results) < top and self.check_is_sibling_up():
+            results.extend(self.get_complete_from_sibling(top - len(results)))
+
+        return results
+
+    def pullComplete_sibling(self):
+        # only called when results are pulled by the sibling
+        top = int(self.get_attribute(request, 'top'))
+        results = self.pull_results(top, from_sibling=True)
+        return make_response(jsonify(results=results), 200)
+
+    def pullComplete(self):
+        top = int(self.get_attribute(request, 'top'))
+        results = self.pull_results(top)
 
         return make_response(jsonify(results=results), 200)
 
