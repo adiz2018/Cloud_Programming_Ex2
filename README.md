@@ -14,5 +14,5 @@ The repository contains the following files:
 10. failure_modes.pdf - A file detailing failure modes and how to deal with them if this was a real-world project.
 
 ## How to run
-You should execute the file "main.py" to run start the system.
+You should execute the file "main.py" to start the system.
 

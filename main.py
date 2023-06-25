@@ -11,7 +11,7 @@ if __name__ == '__main__':
                                                                        sibling_ip=first_public_ip,
                                                                        define_iam=True)
     # we need to give the endpoints time to bring up the program
-    time.sleep(180)
+    time.sleep(120)
     # connect the endpoints
     try:
         req = requests.post(f"http://{first_public_ip}:5000/add_sibling?sibling_ip={second_public_ip}")
